@@ -1,0 +1,2 @@
+FLASK_APP=twitoff
+FLASK_ENV=development
