@@ -3,8 +3,10 @@ Basic application development through Flask
 """
 
 from re import DEBUG
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from .models import DB, User, Tweet
+from .twitter import add_or_update_user, get_all_usernames
+from .predict import predict_user
 
 # Factory to manage application startup
 def create_app():
@@ -39,17 +41,6 @@ def create_app():
         return render_template('base.html', title='Home', users=users)
 
 
-    @app.route('/bananas')
-    def bananas():
-        """Contains /banana page
-
-        Returns
-        -------
-        template described in base.html
-        """
-        return render_template('base.html', title='Bananas')
-
-
     @app.route('/reset')
     def reset():
         """Drop all database tables 
@@ -61,38 +52,66 @@ def create_app():
         """
         DB.drop_all()
         DB.create_all()
-        return '''The database has been reset. 
-        <a href='/'>Go to Home</a>
-        <a href='/reset'>Go to reset</a>
-        <a href='/populate'>Go to populate</a>'''
+        return render_template('base.html', title='Reset Database')
 
 
-    @app.route('/populate')
-    def populate():
-        """Adds fake users and to database
+    @app.route('/update')
+    def update():
+        """Updates the DB with most recent tweets from populated tables"""
+        # gets all users existing in DB
+        usernames = get_all_usernames()
 
-        Returns
-        -------
-        str : "Database has been populated"
+        for username in usernames:
+            add_or_update_user(username)
+
+        return render_template('base.html', title='Users Updated')
+
+
+    @app.route('/user', methods=['POST'])
+    @app.route('/user/<username>', methods=['GET'])
+    def user(username=None, message=''):
+        """Grabs users from the Not Twitter API and displays them
+
+        Parameters
+        ----------
+        username : str
+            tells the app which user to add/display based on their Not Twitter handle
+        message : str
+            Sent to base.html to be displayed on the application site
         """
-        # Creates Fake Users
-        matt = User(id=1, username='Matt')
-        DB.session.add(matt)
-        ryan = User(id=2, username='Ryan')
-        DB.session.add(ryan)
+        username = username or request.values['user_name']
 
-        # Create Fake Tweets
-        tweet1 = Tweet(id=1, text="matt's tweet text", user=matt)
-        DB.session.add(tweet1)
-        tweet2 = Tweet(id=2, text="ryan's tweet text", user=ryan)
-        DB.session.add(tweet2)
+        try:
+            if request.method == 'POST':
+                add_or_update_user(username)
+                message = f'User "{username}" has been successfully added!'
 
-        # Commit Changes to the DB
-        DB.session.commit()
+            tweets = User.query.filter(User.username==username).one().tweets
 
-        return '''Created some users. 
-        <a href='/'>Go to Home</a>
-        <a href='/reset'>Go to reset</a>
-        <a href='/populate'>Go to populate</a>'''
+        except Exception as e:
+            message = f'Error adding {username}: {e}'
+            tweets = []
+
+        return render_template('user.html', title=username, tweets=tweets, message=message)
+
+
+    @app.route('/compare', methods=['POST'])
+    def compare():
+        """Displays the functionality of the Not Tweet comparison"""
+        user0, user1 = sorted([request.values['user0'], request.values['user1']])
+        hypo_tweet_text = request.values['tweet_text']
+
+        if user0 == user1:
+            message = 'Cannot compare a user to themselves!'
+        else:
+            prediction = predict_user(user0, user1, hypo_tweet_text)
+
+            # Get into if statement if prediction is 1
+            if prediction:
+                message = f'"{hypo_tweet_text}" is more likely to be said by {user1} than by {user0}'
+            else:
+                message = f'"{hypo_tweet_text}" is more likely to be said by {user0} than by {user1}'
+
+        return render_template('prediction.html', title='Prediction', message=message)
 
     return app
